@@ -468,10 +468,10 @@ export function startServer(port = null, customDb = null) {
   const app = createPaymentApp(customDb);
 
   return new Promise(resolve => {
-    // Loopback by default; reach this service via the local Cloudflare Tunnel, not 0.0.0.0.
-    const bindHost = process.env.YOUPI_BIND_HOST || '127.0.0.1';
+    // FORCE 0.0.0.0 for Render so it can bind
+    const bindHost = '0.0.0.0';
     const instance = app.rawServer.listen(finalPort, bindHost, () => {
-      console.log(`[Payment API] Server listening on port ${finalPort}`);
+      console.log(`[Payment API] Server listening on ${bindHost}:${finalPort}`);
       resolve({
         app,
         port: finalPort,
