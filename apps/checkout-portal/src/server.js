@@ -30,6 +30,26 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
+/** Origins allowed to call the checkout API from a browser (your store sites). */
+const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || 'https://promptify-xesb.onrender.com')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+function applyCors(req, res) {
+  const origin = req.headers.origin;
+  if (!origin || !CORS_ALLOWED_ORIGINS.includes(origin)) return false;
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    req.headers['access-control-request-headers'] || 'Content-Type, Authorization'
+  );
+  res.setHeader('Access-Control-Max-Age', '86400');
+  return true;
+}
+
 /**
  * Strips hop-by-hop and spoofable internal headers before proxying to the payment core.
  * Returns a shallow copy so the caller's request object is never mutated.
@@ -185,6 +205,14 @@ export class CheckoutServer {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
       const pathname = url.pathname;
 
+      // CORS for the Promptify storefront + answer browser preflight
+      applyCors(req, res);
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
       // Health
       if (pathname === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -206,7 +234,18 @@ export class CheckoutServer {
             'x-forwarded-proto': req.headers['x-forwarded-proto'] || 'https'
           }
         }, (proxyRes) => {
-          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          // Preserve any CORS headers already set by applyCors, and surface
+          // upstream headers without clobbering them.
+          const mergedHeaders = { ...proxyRes.headers };
+          const existingAllowOrigin = res.getHeader('Access-Control-Allow-Origin');
+          if (existingAllowOrigin) {
+            mergedHeaders['access-control-allow-origin'] = existingAllowOrigin;
+          }
+          const existingVary = res.getHeader('Vary');
+          if (existingVary) {
+            mergedHeaders['vary'] = existingVary;
+          }
+          res.writeHead(proxyRes.statusCode, mergedHeaders);
           proxyRes.pipe(res);
         });
 
@@ -287,14 +326,14 @@ export class CheckoutServer {
         const state = await this.fetchPaymentState(paymentId);
 
         const rendered = this.renderHtml(paymentId, state);
-res.writeHead(200, {
-            'Content-Type': 'text/html; charset=utf-8',
-            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
-            'Pragma': 'no-cache',
-            'Expires': '0',
-            'Access-Control-Allow-Origin': '*',
-            ...BASE_SECURITY_HEADERS
-          });
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+          'Access-Control-Allow-Origin': '*',
+          ...BASE_SECURITY_HEADERS
+        });
         res.end(rendered);
         return;
       }
