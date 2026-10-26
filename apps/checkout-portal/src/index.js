@@ -3,18 +3,17 @@ import { fileURLToPath } from 'node:url';
 import { CheckoutServer } from './server.js';
 
 export function startCheckoutServer(port = null, options = {}) {
-  const finalPort = port || Number(process.env.CHECKOUT_PORTAL_PORT || 7000);
+  // RENDER FIX: Use Render's dynamic PORT first, fallback to 7000
+  const finalPort = port || Number(process.env.PORT || process.env.CHECKOUT_PORTAL_PORT || 7000);
   const checkoutServer = new CheckoutServer(options);
   const rawServer = checkoutServer.createServer();
 
-  // Bind to loopback unless explicitly overridden. These services hold admin/observer
-  // credentials and are reached through a local Cloudflare Tunnel, so exposing every
-  // network interface is unnecessary.
-  const bindHost = process.env.YOUPI_BIND_HOST || '127.0.0.1';
+  // RENDER FIX: Bind to 0.0.0.0 so external traffic can reach it
+  const bindHost = process.env.YOUPI_BIND_HOST || '0.0.0.0';
 
   return new Promise(resolve => {
     const instance = rawServer.listen(finalPort, bindHost, () => {
-      console.log(`[Checkout Portal] Server listening on port ${finalPort}`);
+      console.log(`[Checkout Portal] Server listening on ${bindHost}:${finalPort}`);
       resolve({
         port: finalPort,
         close: () => new Promise(cb => instance.close(cb))
