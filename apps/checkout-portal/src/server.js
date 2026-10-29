@@ -13,8 +13,8 @@ const BASE_SECURITY_HEADERS = Object.freeze({
   'X-Content-Type-Options': 'nosniff',
   // FIXED: Removed X-Frame-Options to allow iframe embedding
   'Referrer-Policy': 'strict-origin-when-cross-origin',
-  // FIXED: Added Promptify to frame-ancestors
-  'Content-Security-Policy': "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'self' https://promptify-xesb.onrender.com; base-uri 'none'; form-action 'self'; object-src 'none'"
+  // FIXED: Added both Promptify and Websyes to frame-ancestors
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'self' https://promptify-xesb.onrender.com https://websyes.onrender.com; base-uri 'none'; form-action 'self'; object-src 'none'"
 });
 
 /**
@@ -32,7 +32,7 @@ function escapeHtml(value) {
 }
 
 /** Origins allowed to call the checkout API from a browser (your store sites). */
-const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || 'https://promptify-xesb.onrender.com')
+const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || 'https://promptify-xesb.onrender.com,https://websyes.onrender.com')
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
@@ -206,7 +206,7 @@ export class CheckoutServer {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
       const pathname = url.pathname;
 
-      // CORS for the Promptify storefront + answer browser preflight
+      // CORS for the Promptify + Websyes storefronts and answer browser preflight
       applyCors(req, res);
       if (req.method === 'OPTIONS') {
         res.writeHead(204);
