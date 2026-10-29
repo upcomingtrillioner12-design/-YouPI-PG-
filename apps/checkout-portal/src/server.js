@@ -11,17 +11,11 @@ const __dirname = path.dirname(__filename);
 /** Security headers applied to every response served by the portal. */
 const BASE_SECURITY_HEADERS = Object.freeze({
   'X-Content-Type-Options': 'nosniff',
-  // FIXED: Removed X-Frame-Options to allow iframe embedding
   'Referrer-Policy': 'strict-origin-when-cross-origin',
-  // FIXED: Added both Promptify and Websyes to frame-ancestors
+  // Added BOTH Promptify and Websyes to allow iframe embedding
   'Content-Security-Policy': "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'self' https://promptify-xesb.onrender.com https://websyes.onrender.com; base-uri 'none'; form-action 'self'; object-src 'none'"
 });
 
-/**
- * Escapes a value for interpolation into HTML text or attribute context.
- * Order ids, merchant names and branding fields are attacker-influenced, so they must
- * never be injected raw into the checkout template.
- */
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -31,7 +25,8 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-/** Origins allowed to call the checkout API from a browser (your store sites). */
+/** Origins allowed to call the checkout API from a browser. */
+// Added BOTH Promptify and Websyes so neither gets blocked
 const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || 'https://promptify-xesb.onrender.com,https://websyes.onrender.com')
   .split(',')
   .map(s => s.trim())
@@ -51,15 +46,10 @@ function applyCors(req, res) {
   return true;
 }
 
-/**
- * Strips hop-by-hop and spoofable internal headers before proxying to the payment core.
- * Returns a shallow copy so the caller's request object is never mutated.
- */
 function sanitizedForwardHeaders(req, targetHost) {
   const headers = { ...req.headers, host: targetHost };
   for (const name of Object.keys(headers)) {
     const lower = name.toLowerCase();
-    // Never let a browser claim to be an internal renderer or replay a credential we issue.
     if (lower === 'x-internal-render' || lower === 'x-internal-token') {
       delete headers[name];
     }
@@ -67,7 +57,6 @@ function sanitizedForwardHeaders(req, targetHost) {
   return headers;
 }
 
-// In production, reliably ensure environment variables from .env are loaded if not already provided
 if (!process.env.BASE_PAYMENT_API_URL && typeof process.loadEnvFile === 'function') {
   try {
     const rootEnv = path.resolve(__dirname, '../../../.env');
@@ -78,12 +67,6 @@ if (!process.env.BASE_PAYMENT_API_URL && typeof process.loadEnvFile === 'functio
 }
 
 export class CheckoutServer {
-  /**
-   * @param {{
-   *   apiBaseUrl?: string,
-   *   helpPortalUrl?: string
-   * }} options
-   */
   constructor(options = {}) {
     try {
       const rootEnv = path.resolve(__dirname, '../../../.env');
@@ -134,10 +117,7 @@ export class CheckoutServer {
     const counterInstructions = state?.branding?.counterInstructions || 'Please visit the billing counter and present this screen to the cashier.';
     const vpa = state?.payeeVpa || state?.vpa || 'merchant@upi';
 
-    // In production and localhost, use relative '' so browser requests hit the checkout portal /api proxy
-    // This avoids cross-origin blocking, CORS errors, and tunnel DNS resolution issues.
     const clientApiBase = '';
-
     const indicator = state?.upiServerIndicator || { status: 'ISSUES', tier: 'RED', label: 'Server Facing Issues' };
     const tier = indicator.tier || (indicator.status === 'WORKING' ? 'GREEN' : (indicator.status === 'BUSY' ? 'YELLOW' : 'RED'));
     const healthClass = tier === 'GREEN' ? 'is-working' : (tier === 'YELLOW' ? 'is-busy' : 'is-issues');
@@ -162,9 +142,6 @@ export class CheckoutServer {
     const downtimeAltBtnDisplay = ((sellingMode === 'ONLINE' && enabledMethods.includes('COD')) || (sellingMode === 'OFFLINE' && enabledMethods.includes('CASH_COUNTER'))) ? 'inline-block' : 'none';
     const downtimeAltBtnLabel = (sellingMode === 'ONLINE') ? 'Pay via Cash on Delivery Instead' : 'Pay by Cash at Till Instead';
 
-    // Everything interpolated below is derived from merchant-supplied or customer-supplied data
-    // (order ids, branding, payee names), so it is HTML-escaped. `{{INITIAL_STATE_JSON}}` is
-    // additionally guarded against `<` so it cannot terminate the inline script block.
     html = html.replaceAll('{{PAYMENT_ID}}', escapeHtml(paymentId));
     html = html.replaceAll('{{API_BASE_URL}}', clientApiBase);
     html = html.replaceAll('{{APP_NAME}}', escapeHtml(appName));
@@ -206,7 +183,6 @@ export class CheckoutServer {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
       const pathname = url.pathname;
 
-      // CORS for the Promptify + Websyes storefronts and answer browser preflight
       applyCors(req, res);
       if (req.method === 'OPTIONS') {
         res.writeHead(204);
@@ -214,14 +190,12 @@ export class CheckoutServer {
         return;
       }
 
-      // Health
       if (pathname === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'UP', service: 'checkout-portal' }));
         return;
       }
 
-      // Transparent API Proxy: /api/* -> Payment Core REST API
       if (pathname.startsWith('/api/')) {
         const targetPort = Number(process.env.PAYMENT_API_PORT || 6100);
         const proxyReq = http.request({
@@ -235,8 +209,6 @@ export class CheckoutServer {
             'x-forwarded-proto': req.headers['x-forwarded-proto'] || 'https'
           }
         }, (proxyRes) => {
-          // Preserve any CORS headers already set by applyCors, and surface
-          // upstream headers without clobbering them.
           const mergedHeaders = { ...proxyRes.headers };
           const existingAllowOrigin = res.getHeader('Access-Control-Allow-Origin');
           if (existingAllowOrigin) {
@@ -261,7 +233,6 @@ export class CheckoutServer {
         return;
       }
 
-      // Official SDK script: GET /youpi.js or /sdk/youpi-checkout.js
       if (pathname === '/youpi.js' || pathname === '/sdk/youpi.js' || pathname === '/sdk/youpi-checkout.js') {
         try {
           const resolvedSdkPath = fs.existsSync(path.join(__dirname, 'sdk', 'youpi.js'))
@@ -283,7 +254,6 @@ export class CheckoutServer {
         return;
       }
 
-      // Static icons: GET /icons/:filename
       if (pathname.startsWith('/icons/')) {
         const iconName = path.basename(pathname);
         const iconPath = path.join(__dirname, '..', 'public', 'icons', iconName);
@@ -300,7 +270,6 @@ export class CheckoutServer {
         }
       }
 
-      // QR SVG: GET /checkout/:id/qr.svg (Direct from merchant receiving account)
       const qrMatch = pathname.match(/^\/checkout\/([^/]+)\/qr\.svg$/);
       if (qrMatch) {
         const paymentId = qrMatch[1];
@@ -320,7 +289,6 @@ export class CheckoutServer {
         return;
       }
 
-      // Checkout Page: GET /checkout/:id
       const checkoutMatch = pathname.match(/^\/checkout\/([^/]+)$/);
       if (checkoutMatch) {
         const paymentId = checkoutMatch[1];
@@ -339,7 +307,6 @@ export class CheckoutServer {
         return;
       }
 
-      // Not found
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('Checkout Page Not Found');
     });
